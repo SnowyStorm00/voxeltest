@@ -58,10 +58,11 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             b = 0.5f * (b + 1.0f);
             b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
             // Desert mask: large contiguous regions based on very low frequency noise
-            const float desertScale = 1.0f / 400.0f;
+            // Use raw fbm in [0,1], prefer deserts in low-relief (plains-like) areas
+            const float desertScale = 1.0f / 700.0f;
             float d = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 3, 2.0f, 0.5f);
-            d = 0.5f * (d + 1.0f);
-            bool inDesert = (d > 0.68f); // tune size of deserts
+            // Make deserts rarer and mostly within plains/hills blend
+            bool inDesert = (d > 0.84f) && (b < 0.72f);
             // Smoothly blend heights in narrow bands around thresholds to avoid cliffs
             const float t0 = 0.65f, t1 = 0.90f; // thresholds
             const float w = 0.06f;              // blend half-width
@@ -208,7 +209,7 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                 uint32_t h = (uint32_t)wx * 2166136261u ^ (uint32_t)wz * 16777619u ^ (uint32_t)m_seed;
                 h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
                 float chance = (h & 0xFFFF) / 65535.0f;
-                if(chance < 0.05f){
+                if(chance < 0.009f){
                     // Find surface height again (height variable is surface).
                     int baseY = height + 1; // place cactus starting above ground
                     int tall = 2 + (int)((h >> 16) % 4); // 2..5
@@ -321,10 +322,9 @@ VoxelWorld::Biome VoxelWorld::GetBiomeAt(int wx, int wz) const {
     b = 0.5f * (b + 1.0f);
     b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
     // Desert mask decides desert independently so it can overlay plains mostly
-    const float desertScale = 1.0f / 400.0f;
+    const float desertScale = 1.0f / 700.0f;
     float d = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 3, 2.0f, 0.5f);
-    d = 0.5f * (d + 1.0f);
-    if(d > 0.68f) return Biome::Desert;
+    if(d > 0.84f && b < 0.72f) return Biome::Desert;
     if(b < 0.65f) return Biome::Plains;
     if(b < 0.90f) return Biome::Hills;
     return Biome::Mountains;
