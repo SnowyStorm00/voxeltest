@@ -254,8 +254,9 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                         if(rand01(h ^ salt) >= armProb) return;
                         int ay = baseY + 1 + (int)((h >> (20+dirIdx)) % std::max(1, tall-2));
                         ay = std::min(ay, CHUNK_HEIGHT-2);
-                        int hLen = 1 + (int)(((h >> (8+dirIdx)) & 1));       // 1..2 out
-                        int vLen = 1 + (int)(((h >> (12+dirIdx)) % 3));      // 1..3 up
+                        // Fixed L-shape: go out 2, then up 1
+                        const int hLen = 2;
+                        const int vLen = 1;
                         int ex = x, ez = z;
                         // Horizontal segment
                         for(int i=1;i<=hLen;++i){
