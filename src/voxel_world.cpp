@@ -247,34 +247,35 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                         int ly = baseY + i;
                         if(c.blocks[idx(x,ly,z)] == 0) c.blocks[idx(x,ly,z)] = 10; // 10 = cactus
                     }
-                    // Arm branches in 4 directions with height variation; more common toward desert core
+                    // Arms: horizontal out then vertical up (L-shape), classic saguaro style
                     auto rand01 = [&](uint32_t k){ uint32_t r=k; r ^= r>>13; r *= 1274126177u; r ^= r>>16; return (r & 0xFFFF) / 65535.0f; };
-                    float armProb = 0.08f + 0.18f * occ; // ~8% at fringe up to ~26% at core per direction
-                    int armHeights[4];
-                    armHeights[0] = baseY + 1 + (int)((h >> 20) % std::max(1, tall-2)); // +X
-                    armHeights[1] = baseY + 1 + (int)((h >> 21) % std::max(1, tall-2)); // -X
-                    armHeights[2] = baseY + 1 + (int)((h >> 22) % std::max(1, tall-2)); // +Z
-                    armHeights[3] = baseY + 1 + (int)((h >> 23) % std::max(1, tall-2)); // -Z
-                    // +X
-                    if(rand01(h ^ 0xA1B2C3u) < armProb){ int ay = std::min(armHeights[0], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
-                        if(x+1 < CHUNK_SIZE && c.blocks[idx(x+1, ay, z)] == 0) c.blocks[idx(x+1, ay, z)] = 10;
-                        if(x+2 < CHUNK_SIZE && c.blocks[idx(x+2, ay, z)] == 0) c.blocks[idx(x+2, ay, z)] = 10; }
-                    }
-                    // -X
-                    if(rand01(h ^ 0xB2C3D4u) < armProb){ int ay = std::min(armHeights[1], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
-                        if(x-1 >= 0 && c.blocks[idx(x-1, ay, z)] == 0) c.blocks[idx(x-1, ay, z)] = 10;
-                        if(x-2 >= 0 && c.blocks[idx(x-2, ay, z)] == 0) c.blocks[idx(x-2, ay, z)] = 10; }
-                    }
-                    // +Z
-                    if(rand01(h ^ 0xC3D4E5u) < armProb){ int ay = std::min(armHeights[2], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
-                        if(z+1 < CHUNK_SIZE && c.blocks[idx(x, ay, z+1)] == 0) c.blocks[idx(x, ay, z+1)] = 10;
-                        if(z+2 < CHUNK_SIZE && c.blocks[idx(x, ay, z+2)] == 0) c.blocks[idx(x, ay, z+2)] = 10; }
-                    }
-                    // -Z
-                    if(rand01(h ^ 0xD4E5F6u) < armProb){ int ay = std::min(armHeights[3], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
-                        if(z-1 >= 0 && c.blocks[idx(x, ay, z-1)] == 0) c.blocks[idx(x, ay, z-1)] = 10;
-                        if(z-2 >= 0 && c.blocks[idx(x, ay, z-2)] == 0) c.blocks[idx(x, ay, z-2)] = 10; }
-                    }
+                    float armProb = 0.10f + 0.20f * occ; // ~10% at fringe up to ~30% at core per direction
+                    auto tryArm = [&](int dirIdx, uint32_t salt, int dx, int dz){
+                        if(rand01(h ^ salt) >= armProb) return;
+                        int ay = baseY + 1 + (int)((h >> (20+dirIdx)) % std::max(1, tall-2));
+                        ay = std::min(ay, CHUNK_HEIGHT-2);
+                        int hLen = 1 + (int)(((h >> (8+dirIdx)) & 1));       // 1..2 out
+                        int vLen = 1 + (int)(((h >> (12+dirIdx)) % 3));      // 1..3 up
+                        int ex = x, ez = z;
+                        // Horizontal segment
+                        for(int i=1;i<=hLen;++i){
+                            int nx = x + dx*i, nz = z + dz*i;
+                            if(nx < 0 || nx >= CHUNK_SIZE || nz < 0 || nz >= CHUNK_SIZE) { break; }
+                            if(c.blocks[idx(nx, ay, nz)] != 0) { break; }
+                            c.blocks[idx(nx, ay, nz)] = 10;
+                            ex = nx; ez = nz;
+                        }
+                        // Vertical segment up from tip
+                        for(int j=1;j<=vLen && ay+j < CHUNK_HEIGHT; ++j){
+                            if(c.blocks[idx(ex, ay+j, ez)] != 0) break;
+                            c.blocks[idx(ex, ay+j, ez)] = 10;
+                        }
+                    };
+                    // Try arms in 4 directions
+                    tryArm(0, 0xA1B2C3u, +1,  0);
+                    tryArm(1, 0xB2C3D4u, -1,  0);
+                    tryArm(2, 0xC3D4E5u,  0, +1);
+                    tryArm(3, 0xD4E5F6u,  0, -1);
                 }
             }
         }
