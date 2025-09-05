@@ -112,10 +112,16 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             const float desertScale = 1.0f / 800.0f; // lower freq => larger deserts
             float dNoise = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 2, 2.0f, 0.5f);
             dNoise = std::clamp(dNoise, 0.0f, 1.0f);
+            // Macro mask to enforce minimum region size for deserts (prevents tiny specks)
+            const float macroScale = 1.0f / 2200.0f;
+            float macroN = fbm2D(wx * macroScale, wz * macroScale, m_seed + 202020u, 2, 2.0f, 0.5f);
+            macroN = std::clamp(0.5f * (macroN + 1.0f), 0.0f, 1.0f);
+            float macroBand = sstep(0.46f, 0.58f, macroN);
             // Prefer deserts in plains-like areas (low biome roughness)
             float plainsMask = 1.0f - sstep(0.60f, 0.88f, b);
-            float dBand = sstep(0.68f, 0.82f, dNoise);
-            float desertFactor = std::clamp(dBand * plainsMask, 0.0f, 1.0f);
+            // Slightly relaxed inner band for a bit more coverage; multiplied by macro band for larger minimum size
+            float dBand = sstep(0.66f, 0.80f, dNoise);
+            float desertFactor = std::clamp(dBand * macroBand * plainsMask, 0.0f, 1.0f);
 
             // Base (non-desert) blended height via existing biomes
             float hBase = 0.0f; uint8_t baseSurf = 2;
@@ -224,14 +230,15 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                 c.blocks[idx(x,y,z)] = id;
             }
 
-            // After setting terrain, add cacti only in desert core: very sparse, 2–5 tall with rare arms
-            if(desertFactor > 0.75f){
+            // After setting terrain, add cacti across desert and transition, scaled by desert strength; very sparse overall
+            if(desertFactor > 0.45f){
                 // Use a repeatable hash to decide placements
                 uint32_t h = (uint32_t)wx * 2166136261u ^ (uint32_t)wz * 16777619u ^ (uint32_t)m_seed;
                 h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
                 float chance = (h & 0xFFFF) / 65535.0f;
-                float core = sstep(0.75f, 0.95f, desertFactor);
-                if(chance < 0.004f * core){
+                float occ = sstep(0.45f, 0.95f, desertFactor);
+                // Density grows toward core; square to taper fringe strongly
+                if(chance < 0.0030f * occ * occ){
                     // Find surface height again (height variable is surface).
                     int baseY = height + 1; // place cactus starting above ground
                     int tall = 2 + (int)((h >> 16) % 4); // 2..5
@@ -241,11 +248,11 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                         if(c.blocks[idx(x,ly,z)] == 0) c.blocks[idx(x,ly,z)] = 10; // 10 = cactus
                     }
                     // Rare arm branching to +X or +Z
-                    if(((h >> 8) & 0xFF) < 6 && baseY+1 < CHUNK_HEIGHT){
+                    if(((h >> 8) & 0xFF) < 4 && baseY+1 < CHUNK_HEIGHT){
                         if(x+1 < CHUNK_SIZE && c.blocks[idx(x+1, baseY+1, z)] == 0) c.blocks[idx(x+1, baseY+1, z)] = 10;
                         if(x+2 < CHUNK_SIZE && c.blocks[idx(x+2, baseY+1, z)] == 0) c.blocks[idx(x+2, baseY+1, z)] = 10;
                     }
-                    if(((h >> 4) & 0xFF) < 6 && baseY+2 < CHUNK_HEIGHT){
+                    if(((h >> 4) & 0xFF) < 4 && baseY+2 < CHUNK_HEIGHT){
                         if(z+1 < CHUNK_SIZE && c.blocks[idx(x, baseY+2, z+1)] == 0) c.blocks[idx(x, baseY+2, z+1)] = 10;
                         if(z+2 < CHUNK_SIZE && c.blocks[idx(x, baseY+2, z+2)] == 0) c.blocks[idx(x, baseY+2, z+2)] = 10;
                     }
@@ -343,14 +350,18 @@ VoxelWorld::Biome VoxelWorld::GetBiomeAt(int wx, int wz) const {
     float b = fbm2D(wx * biomeScale, wz * biomeScale, m_seed + 9001u, 3, 2.0f, 0.5f);
     b = 0.5f * (b + 1.0f);
     b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
-    // Smooth desert factor matching terrain generation
+    // Smooth desert factor matching terrain generation (with macro mask)
     const float desertScale = 1.0f / 800.0f;
     float dNoise = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 2, 2.0f, 0.5f);
     dNoise = std::clamp(dNoise, 0.0f, 1.0f);
     auto sstep = [](float e0, float e1, float x){ float t = (x - e0) / (e1 - e0); t = std::clamp(t, 0.0f, 1.0f); return t*t*(3.0f - 2.0f*t); };
+    const float macroScale = 1.0f / 2200.0f;
+    float macroN = fbm2D(wx * macroScale, wz * macroScale, m_seed + 202020u, 2, 2.0f, 0.5f);
+    macroN = std::clamp(0.5f * (macroN + 1.0f), 0.0f, 1.0f);
+    float macroBand = sstep(0.46f, 0.58f, macroN);
     float plainsMask = 1.0f - sstep(0.60f, 0.88f, b);
-    float dBand = sstep(0.68f, 0.82f, dNoise);
-    float desertFactor = std::clamp(dBand * plainsMask, 0.0f, 1.0f);
+    float dBand = sstep(0.66f, 0.80f, dNoise);
+    float desertFactor = std::clamp(dBand * macroBand * plainsMask, 0.0f, 1.0f);
     if(desertFactor > 0.55f) return Biome::Desert;
     if(b < 0.65f) return Biome::Plains;
     if(b < 0.90f) return Biome::Hills;
