@@ -744,6 +744,7 @@ private:
             const wchar_t* bname = L"PLAINS";
             if(biome == VoxelWorld::Biome::Hills) bname = L"HILLS";
             else if(biome == VoxelWorld::Biome::Mountains) bname = L"MOUNTAINS";
+            else if(biome == VoxelWorld::Biome::Desert) bname = L"DESERT";
             DrawGlyphStringTopRight(bname, 0xFFB0FFC0u, 2, 36); // slightly lower margin
         }
     }
@@ -1222,6 +1223,19 @@ private:
                     // Toggle freecam with backtick (`)
                     m_freecam = !m_freecam;
                     m_showPlayer = !m_freecam;
+                } else if(vk == VK_F7) {
+                    // Debug: warp to nearest DESERT biome
+                    if(m_world && WarpToNearestBiome(VoxelWorld::Biome::Desert, 4096, CHUNK_SIZE)){
+                        // Recenter streaming
+                        UpdateCameraChunk();
+                        m_chunks.clear();
+                        m_requested.clear();
+                        EnqueueVisibleChunks();
+                        // Brief title hint
+                        SetWindowTextW(GetHwnd(), L"Warped to DESERT (F7)");
+                    } else {
+                        SetWindowTextW(GetHwnd(), L"No DESERT found within search radius");
+                    }
                 } else if(m_showMenu) {
                     // Menu navigation when open
                     if(vk == VK_UP){ m_menuIndex = (m_menuIndex + (m_menuItems-1)) % m_menuItems; }
@@ -1766,6 +1780,59 @@ private:
         int groundY = FindGroundY(wx, wz);
         if(groundY >= 0){ m_playerPos.y = (float)groundY + 2.0f; }
     // Camera position will be set by Update() in third-person
+    }
+
+    bool WarpToNearestBiome(VoxelWorld::Biome target, int maxRadius, int step){
+        if(!m_world) return false;
+        // Start from current XZ
+        XMFLOAT3 p = m_cam.Position();
+        int cx = (int)std::floor(p.x);
+        int cz = (int)std::floor(p.z);
+        // Expand in square rings
+        auto isTarget = [&](int wx, int wz){ return m_world->GetBiomeAt(wx, wz) == target; };
+        for(int r = step; r <= maxRadius; r += step){
+            int x0 = cx - r, x1 = cx + r;
+            int z0 = cz - r, z1 = cz + r;
+            // Top and bottom edges
+            for(int x = x0; x <= x1; x += step){
+                if(isTarget(x, z0) || isTarget(x, z1)){
+                    int gy = FindGroundY(x, (isTarget(x,z0)? z0 : z1));
+                    if(gy >= 0){
+                        float y = (float)gy + 2.0f;
+                        m_playerPos = XMFLOAT3((float)x, y, (float)(isTarget(x,z0)? z0 : z1));
+                        if(!m_freecam){
+                            // Place camera behind player will update on next frame; set position now for instant feedback
+                            m_cam.SetPosition(m_playerPos.x, m_playerPos.y + m_eyeHeight, m_playerPos.z);
+                            m_cam.UpdateViewMatrix();
+                        } else {
+                            m_cam.SetPosition(m_playerPos.x, m_playerPos.y + 6.0f, m_playerPos.z);
+                            m_cam.UpdateViewMatrix();
+                        }
+                        return true;
+                    }
+                }
+            }
+            // Left and right edges (excluding corners already checked)
+            for(int z = z0 + step; z <= z1 - step; z += step){
+                if(isTarget(x0, z) || isTarget(x1, z)){
+                    int wx = isTarget(x0,z)? x0 : x1;
+                    int gy = FindGroundY(wx, z);
+                    if(gy >= 0){
+                        float y = (float)gy + 2.0f;
+                        m_playerPos = XMFLOAT3((float)wx, y, (float)z);
+                        if(!m_freecam){
+                            m_cam.SetPosition(m_playerPos.x, m_playerPos.y + m_eyeHeight, m_playerPos.z);
+                            m_cam.UpdateViewMatrix();
+                        } else {
+                            m_cam.SetPosition(m_playerPos.x, m_playerPos.y + 6.0f, m_playerPos.z);
+                            m_cam.UpdateViewMatrix();
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     int FindGroundY(int wx, int wz){

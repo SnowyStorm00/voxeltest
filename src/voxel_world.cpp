@@ -59,10 +59,10 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
             // Desert mask: large contiguous regions based on very low frequency noise
             // Use raw fbm in [0,1], prefer deserts in low-relief (plains-like) areas
-            const float desertScale = 1.0f / 550.0f;
+            const float desertScale = 1.0f / 520.0f;
             float d = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 3, 2.0f, 0.5f);
             // Make deserts present but not dominating; allow into mild hills
-            bool inDesert = (d > 0.80f) && (b < 0.80f);
+            bool inDesert = (d > 0.78f) && (b < 0.82f);
             // Smoothly blend heights in narrow bands around thresholds to avoid cliffs
             const float t0 = 0.65f, t1 = 0.90f; // thresholds
             const float w = 0.06f;              // blend half-width
@@ -322,9 +322,9 @@ VoxelWorld::Biome VoxelWorld::GetBiomeAt(int wx, int wz) const {
     b = 0.5f * (b + 1.0f);
     b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
     // Desert mask decides desert independently so it can overlay plains mostly
-    const float desertScale = 1.0f / 550.0f;
+    const float desertScale = 1.0f / 520.0f;
     float d = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 3, 2.0f, 0.5f);
-    if(d > 0.80f && b < 0.80f) return Biome::Desert;
+    if(d > 0.78f && b < 0.82f) return Biome::Desert;
     if(b < 0.65f) return Biome::Plains;
     if(b < 0.90f) return Biome::Hills;
     return Biome::Mountains;
