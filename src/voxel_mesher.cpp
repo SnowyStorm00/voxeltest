@@ -19,6 +19,8 @@ static inline uint32_t colorForId(uint8_t id) {
     if(id == 4) return packColor(150,150,160, 255);     // stone
     if(id == 7) return packColor(210, 180, 140, 255);   // path (tan)
     if(id == 8) return packColor(50, 110, 220, 255);    // water (blue)
+    if(id == 9) return packColor(237, 201, 175, 255);   // sand (light desert sand)
+    if(id == 10) return packColor(34, 120, 60, 255);    // cactus (green)
     return packColor(200,200,200, 255);
 }
 

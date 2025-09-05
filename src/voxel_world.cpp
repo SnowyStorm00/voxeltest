@@ -46,7 +46,7 @@ static float fbm2D(float x, float y, uint32_t seed, int octaves, float lacunarit
 }
 
 void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
-    // Discrete biomes: 0=plains, 1=hills, 2=mountains
+    // Discrete biomes: 0=plains, 1=hills, 2=mountains, 3=desert
     const float biomeScale = 1.0f / 256.0f; // very low frequency for large regions
     for(int z = 0; z < CHUNK_SIZE; ++z) {
         for(int x = 0; x < CHUNK_SIZE; ++x) {
@@ -57,20 +57,28 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             float b = fbm2D(wx * biomeScale, wz * biomeScale, m_seed + 9001u, 3, 2.0f, 0.5f);
             b = 0.5f * (b + 1.0f);
             b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
+            // Desert mask: large contiguous regions based on very low frequency noise
+            const float desertScale = 1.0f / 400.0f;
+            float d = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 3, 2.0f, 0.5f);
+            d = 0.5f * (d + 1.0f);
+            bool inDesert = (d > 0.68f); // tune size of deserts
             // Smoothly blend heights in narrow bands around thresholds to avoid cliffs
             const float t0 = 0.65f, t1 = 0.90f; // thresholds
             const float w = 0.06f;              // blend half-width
             auto sstep = [](float e0, float e1, float x){ float t = (x - e0) / (e1 - e0); t = std::clamp(t, 0.0f, 1.0f); return t*t*(3.0f - 2.0f*t); };
 
-            // Height sampler for a specific biome index (0=plains,1=hills,2=mountains)
+            // Height sampler for a specific biome index (0=plains,1=hills,2=mountains,3=desert)
             auto sampleHeight = [&](int biomeIdx)->std::pair<float,uint8_t>{
                 float baseHeight, amp, freq; int oct; float warpScale, warpAmp; float ridgedMix = 0.0f; uint8_t grassId;
                 if(biomeIdx == 0){ // plains
                     baseHeight = 10.0f; amp = 16.0f; freq = 1.0f/72.0f; oct=3; warpScale=1.0f/200.0f; warpAmp=3.0f; grassId=2; ridgedMix=0.0f;
                 } else if(biomeIdx == 1){ // hills
                     baseHeight = 14.0f; amp = 36.0f; freq = 1.0f/44.0f; oct=5; warpScale=1.0f/150.0f; warpAmp=10.0f; grassId=5; ridgedMix=0.35f;
-                } else { // mountains
+                } else if(biomeIdx == 2){ // mountains
                     baseHeight = 18.0f; amp = 72.0f; freq = 1.0f/28.0f; oct=5; warpScale=1.0f/120.0f; warpAmp=22.0f; grassId=6; ridgedMix=0.85f;
+                } else { // desert
+                    // Flat like plains, with occasional larger dunes/hills
+                    baseHeight = 9.0f; amp = 10.0f; freq = 1.0f/90.0f; oct=3; warpScale=1.0f/240.0f; warpAmp=2.0f; grassId=9; // 9 = sand
                 }
 
                 float wxWarp = fbm2D(wx * warpScale, wz * warpScale, m_seed + 1717u, 2, 2.0f, 0.5f) * warpAmp;
@@ -105,7 +113,9 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             };
 
             float hF = 0.0f; uint8_t surfGrass = 2;
-            if(b < t0 - w){
+            if(inDesert){
+                auto p = sampleHeight(3); hF = p.first; surfGrass = p.second;
+            } else if(b < t0 - w){
                 auto p = sampleHeight(0); hF = p.first; surfGrass = p.second;
             } else if(b < t0 + w){
                 auto p0 = sampleHeight(0); auto p1 = sampleHeight(1); float s = sstep(t0 - w, t0 + w, b);
@@ -128,7 +138,7 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             bool allowPond = (hF < lowlandThreshold);
             uint8_t waterId = 8; // new voxel id for water
             int pondDepth = 0;
-            if(allowPond){
+            if(allowPond && !inDesert){
                 // Mask controls where ponds are allowed
                 float mask = fbm2D(wx * (1.0f/180.0f), wz * (1.0f/180.0f), m_seed + 8181u, 3, 2.0f, 0.5f);
                 // Center-ish when near 0.5
@@ -145,7 +155,7 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                 }
             }
 
-            // Meandering tan paths: banded FBM noise creates continuous contour-like lines across chunks
+            // Meandering tan paths: banded FBM noise creates continuous contour-like lines across chunks (skip in desert)
             const float pathScale = 1.0f / 140.0f; // lower => larger features
             const int   pathBands = 5;             // number of repeating bands
             const float pathWidth = 0.035f;        // half-width in band space
@@ -154,12 +164,12 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
             float bandPhase = vPath * pathBands;
             float fracPhase = bandPhase - floorf(bandPhase);
             float dBand = fabsf(fracPhase - 0.5f);
-            bool isPathHere = (dBand < pathWidth);
+            bool isPathHere = (!inDesert) && (dBand < pathWidth);
             // Slight widening by checking a tiny offset along two axes to avoid gaps on steep diagonals
             if(!isPathHere){
                 float vP2 = fbm2D((wx+0.6f) * pathScale, (wz+0.2f) * pathScale, m_seed + 7777u, 4, 2.0f, 0.5f);
                 float ph2 = vP2 * pathBands; float fr2 = ph2 - floorf(ph2);
-                if(fabsf(fr2 - 0.5f) < pathWidth) isPathHere = true;
+                if(!inDesert && fabsf(fr2 - 0.5f) < pathWidth) isPathHere = true;
             }
 
             for(int y = 0; y < CHUNK_HEIGHT; ++y) {
@@ -175,13 +185,48 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                             id = 0; // hollowed air above waterline (including original surface)
                         }
                     } else if(y == height) {
-                        // Replace surface block with path when condition matches; id 7 = PATH (tan)
-                        id = (isPathHere ? 7 : surfGrass);
+                        // Desert surface uses sand (9) and spawns cacti occasionally
+                        if(inDesert){
+                            id = 9; // sand surface
+                        } else {
+                            // Replace surface block with path when condition matches; id 7 = PATH (tan)
+                            id = (isPathHere ? 7 : surfGrass);
+                        }
                     }
-                    else if(y >= height-3) id = 3; // dirt
+                    else if(y >= height-3) {
+                        // In desert, use sand layers instead of dirt
+                        id = inDesert ? 9 : 3;
+                    }
                     else id = 4; // stone
                 }
                 c.blocks[idx(x,y,z)] = id;
+            }
+
+            // After setting terrain, add cacti in desert: sparse columns 2–5 tall with arms rarely
+            if(inDesert){
+                // Use a repeatable hash to decide placements
+                uint32_t h = (uint32_t)wx * 2166136261u ^ (uint32_t)wz * 16777619u ^ (uint32_t)m_seed;
+                h ^= h >> 13; h *= 1274126177u; h ^= h >> 16;
+                float chance = (h & 0xFFFF) / 65535.0f;
+                if(chance < 0.05f){
+                    // Find surface height again (height variable is surface).
+                    int baseY = height + 1; // place cactus starting above ground
+                    int tall = 2 + (int)((h >> 16) % 4); // 2..5
+                    for(int i=0;i<tall && baseY+i < CHUNK_HEIGHT; ++i){
+                        // Only place if current is air
+                        int ly = baseY + i;
+                        if(c.blocks[idx(x,ly,z)] == 0) c.blocks[idx(x,ly,z)] = 10; // 10 = cactus
+                    }
+                    // Rare arm branching to +X or +Z
+                    if(((h >> 8) & 0xFF) < 10 && baseY+1 < CHUNK_HEIGHT){
+                        if(x+1 < CHUNK_SIZE && c.blocks[idx(x+1, baseY+1, z)] == 0) c.blocks[idx(x+1, baseY+1, z)] = 10;
+                        if(x+2 < CHUNK_SIZE && c.blocks[idx(x+2, baseY+1, z)] == 0) c.blocks[idx(x+2, baseY+1, z)] = 10;
+                    }
+                    if(((h >> 4) & 0xFF) < 10 && baseY+2 < CHUNK_HEIGHT){
+                        if(z+1 < CHUNK_SIZE && c.blocks[idx(x, baseY+2, z+1)] == 0) c.blocks[idx(x, baseY+2, z+1)] = 10;
+                        if(z+2 < CHUNK_SIZE && c.blocks[idx(x, baseY+2, z+2)] == 0) c.blocks[idx(x, baseY+2, z+2)] = 10;
+                    }
+                }
             }
         }
     }
@@ -275,6 +320,11 @@ VoxelWorld::Biome VoxelWorld::GetBiomeAt(int wx, int wz) const {
     float b = fbm2D(wx * biomeScale, wz * biomeScale, m_seed + 9001u, 3, 2.0f, 0.5f);
     b = 0.5f * (b + 1.0f);
     b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
+    // Desert mask decides desert independently so it can overlay plains mostly
+    const float desertScale = 1.0f / 400.0f;
+    float d = fbm2D(wx * desertScale, wz * desertScale, m_seed + 13337u, 3, 2.0f, 0.5f);
+    d = 0.5f * (d + 1.0f);
+    if(d > 0.68f) return Biome::Desert;
     if(b < 0.65f) return Biome::Plains;
     if(b < 0.90f) return Biome::Hills;
     return Biome::Mountains;

@@ -26,7 +26,7 @@ struct Chunk {
 
 class VoxelWorld {
 public:
-    enum class Biome : uint8_t { Plains=0, Hills=1, Mountains=2 };
+    enum class Biome : uint8_t { Plains=0, Hills=1, Mountains=2, Desert=3 };
     explicit VoxelWorld(unsigned seed = 1337);
     const Chunk& GetChunk(int cx, int cz) const;
     Chunk& GetChunk(int cx, int cz);
