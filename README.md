@@ -33,3 +33,8 @@ Run the executable from the build dir so shaders can be found:
 - Chunk streaming and saving
 - Block types and textures (atlas)
 - Basic gameplay loop: player, NPCs, items
+
+## Settings Menu:
+- VSYNC: toggle vertical sync.
+- FPS CAP: cycle caps; Enter to set uncapped.
+- TAA: toggle Temporal AA with Halton jitter. When ON, the scene renders to an offscreen target and resolves with a simple history clamp.

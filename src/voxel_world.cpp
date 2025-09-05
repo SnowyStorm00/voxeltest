@@ -2,70 +2,12 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
-#include <cmath>
 
 static inline int idx(int x, int y, int z) {
     return x + CHUNK_SIZE*(z + CHUNK_SIZE*y);
 }
 
-VoxelWorld::VoxelWorld(int radius) : m_radius(radius) {
-    int dim = 2*radius + 1;
-    m_chunks.resize(dim * dim);
-}
-
-bool VoxelWorld::InBounds(int cx, int cz) const {
-    int r = m_radius;
-    return cx >= -r && cx <= r && cz >= -r && cz <= r;
-}
-
-const Chunk& VoxelWorld::GetChunk(int cx, int cz) const {
-    int r = m_radius;
-    int dim = 2*r + 1;
-    return m_chunks[(cx + r) + dim * (cz + r)];
-}
-
-Chunk& VoxelWorld::GetChunk(int cx, int cz) {
-    int r = m_radius;
-    int dim = 2*r + 1;
-    return m_chunks[(cx + r) + dim * (cz + r)];
-}
-
-uint8_t VoxelWorld::GetBlock(int x, int y, int z) const {
-    int cx = floorf((float)x / CHUNK_SIZE);
-    int cz = floorf((float)z / CHUNK_SIZE);
-    if(!InBounds(cx, cz) || y < 0 || y >= CHUNK_HEIGHT) return 0;
-    int lx = (x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
-    int lz = (z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
-    auto& c = m_chunks[(cx + m_radius) + (2*m_radius + 1) * (cz + m_radius)];
-    return c.blocks[idx(lx, y, lz)];
-}
-
-void VoxelWorld::SetBlock(int x, int y, int z, uint8_t id) {
-    int cx = floorf((float)x / CHUNK_SIZE);
-    int cz = floorf((float)z / CHUNK_SIZE);
-    if(!InBounds(cx, cz) || y < 0 || y >= CHUNK_HEIGHT) return;
-    int lx = (x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
-    int lz = (z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
-    auto& c = m_chunks[(cx + m_radius) + (2*m_radius + 1) * (cz + m_radius)];
-    c.blocks[idx(lx, y, lz)] = id;
-}
-
-void VoxelWorld::GenerateFlat() {
-    int r = m_radius;
-    for(int cz = -r; cz <= r; ++cz) {
-        for(int cx = -r; cx <= r; ++cx) {
-            auto& c = GetChunk(cx, cz);
-            for(int z = 0; z < CHUNK_SIZE; ++z) {
-                for(int x = 0; x < CHUNK_SIZE; ++x) {
-                    for(int y = 0; y < CHUNK_HEIGHT; ++y) {
-                        uint8_t id = y < 8 ? 2 : 0; // flat ground
-                        c.blocks[idx(x,y,z)] = id;
-                    }
-                }
-            }
-        }
-    }
-}
+VoxelWorld::VoxelWorld(unsigned seed) : m_seed(seed) {}
 
 // Simple 2D value noise with bilinear interpolation and multiple octaves
 static float hash2i(int x, int y, uint32_t seed) {
@@ -103,34 +45,237 @@ static float fbm2D(float x, float y, uint32_t seed, int octaves, float lacunarit
     return sum / (norm > 0 ? norm : 1.0f);
 }
 
-void VoxelWorld::GenerateProcedural(unsigned seed) {
-    int r = m_radius;
-    float baseScale = 1.0f / 48.0f; // big features
-    float detailScale = 1.0f / 12.0f; // smaller shapes
-    for(int cz = -r; cz <= r; ++cz) {
-        for(int cx = -r; cx <= r; ++cx) {
-            auto& c = GetChunk(cx, cz);
-            for(int z = 0; z < CHUNK_SIZE; ++z) {
-                for(int x = 0; x < CHUNK_SIZE; ++x) {
-                    int wx = cx*CHUNK_SIZE + x;
-                    int wz = cz*CHUNK_SIZE + z;
-                    // Height via FBM
-                    float h0 = fbm2D(wx * baseScale, wz * baseScale, seed, 3, 2.0f, 0.5f);
-                    float h1 = fbm2D(wx * detailScale, wz * detailScale, seed+1337u, 2, 2.0f, 0.5f);
-                    float h = 0.4f*h0 + 0.6f*h1; // blend
-                    int height = (int)floorf(8 + h * 18); // 0..~26
-                    height = std::clamp(height, 0, CHUNK_HEIGHT-1);
-                    for(int y = 0; y < CHUNK_HEIGHT; ++y) {
-                        uint8_t id = 0;
-                        if(y <= height) {
-                            if(y == height) id = 2; // grass
-                            else if(y >= height-3) id = 3; // dirt
-                            else id = 4; // stone
-                        }
-                        c.blocks[idx(x,y,z)] = id;
-                    }
+void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
+    // Discrete biomes: 0=plains, 1=hills, 2=mountains
+    const float biomeScale = 1.0f / 256.0f; // very low frequency for large regions
+    for(int z = 0; z < CHUNK_SIZE; ++z) {
+        for(int x = 0; x < CHUNK_SIZE; ++x) {
+            int wx = cx*CHUNK_SIZE + x;
+            int wz = cz*CHUNK_SIZE + z;
+
+            // Biome control: bias toward lower values to increase plains frequency
+            float b = fbm2D(wx * biomeScale, wz * biomeScale, m_seed + 9001u, 3, 2.0f, 0.5f);
+            b = 0.5f * (b + 1.0f);
+            b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
+            // Smoothly blend heights in narrow bands around thresholds to avoid cliffs
+            const float t0 = 0.65f, t1 = 0.90f; // thresholds
+            const float w = 0.06f;              // blend half-width
+            auto sstep = [](float e0, float e1, float x){ float t = (x - e0) / (e1 - e0); t = std::clamp(t, 0.0f, 1.0f); return t*t*(3.0f - 2.0f*t); };
+
+            // Height sampler for a specific biome index (0=plains,1=hills,2=mountains)
+            auto sampleHeight = [&](int biomeIdx)->std::pair<float,uint8_t>{
+                float baseHeight, amp, freq; int oct; float warpScale, warpAmp; float ridgedMix = 0.0f; uint8_t grassId;
+                if(biomeIdx == 0){ // plains
+                    baseHeight = 10.0f; amp = 16.0f; freq = 1.0f/72.0f; oct=3; warpScale=1.0f/200.0f; warpAmp=3.0f; grassId=2; ridgedMix=0.0f;
+                } else if(biomeIdx == 1){ // hills
+                    baseHeight = 14.0f; amp = 36.0f; freq = 1.0f/44.0f; oct=5; warpScale=1.0f/150.0f; warpAmp=10.0f; grassId=5; ridgedMix=0.35f;
+                } else { // mountains
+                    baseHeight = 18.0f; amp = 72.0f; freq = 1.0f/28.0f; oct=5; warpScale=1.0f/120.0f; warpAmp=22.0f; grassId=6; ridgedMix=0.85f;
                 }
+
+                float wxWarp = fbm2D(wx * warpScale, wz * warpScale, m_seed + 1717u, 2, 2.0f, 0.5f) * warpAmp;
+                float wzWarp = fbm2D(wx * warpScale, wz * warpScale, m_seed + 2727u, 2, 2.0f, 0.5f) * warpAmp;
+                float n = fbm2D((wx + wxWarp) * freq, (wz + wzWarp) * freq, m_seed + 17u, oct, 2.0f, 0.5f);
+                if(ridgedMix > 0.0f){
+                    float n2 = fbm2D((wx - wxWarp) * (freq*1.25f), (wz - wzWarp) * (freq*1.25f), m_seed + 4242u, oct, 2.0f, 0.5f);
+                    float ridged = 1.0f - fabsf(n2);
+                    float ridgedSharp = powf(std::clamp(ridged, 0.0f, 1.0f), (biomeIdx==2 ? 0.55f : 0.85f));
+                    n = (1.0f - ridgedMix)*n + ridgedMix*ridgedSharp;
+                }
+                if(biomeIdx == 2){
+                    // Range modulation for mountains
+                    const float deg = 25.0f * 3.14159265f / 180.0f;
+                    float cs = cosf(deg), sn = sinf(deg);
+                    float xr = wx * cs - wz * sn;
+                    float zr = wx * sn + wz * cs;
+                    float rangeScaleX = 1.0f / 420.0f;
+                    float rangeScaleZ = 1.0f / 180.0f;
+                    float rangeNoise = fbm2D(xr * rangeScaleX, zr * rangeScaleZ, m_seed + 5555u, 3, 2.0f, 0.5f);
+                    float rangeRidged = 1.0f - fabsf(rangeNoise);
+                    rangeRidged = powf(std::clamp(rangeRidged, 0.0f, 1.0f), 1.15f);
+                    float ampBoost = 0.7f + 0.6f * rangeRidged;
+                    n *= (0.8f + 0.2f * rangeRidged);
+                    amp *= ampBoost;
+                    float t = 0.5f*(n+1.0f);
+                    t = powf(std::clamp(t, 0.0f, 1.0f), 0.7f);
+                    n = t*2.0f - 1.0f;
+                }
+                float hf = baseHeight + amp * n;
+                return {hf, grassId};
+            };
+
+            float hF = 0.0f; uint8_t surfGrass = 2;
+            if(b < t0 - w){
+                auto p = sampleHeight(0); hF = p.first; surfGrass = p.second;
+            } else if(b < t0 + w){
+                auto p0 = sampleHeight(0); auto p1 = sampleHeight(1); float s = sstep(t0 - w, t0 + w, b);
+                hF = (1.0f - s) * p0.first + s * p1.first; surfGrass = (s >= 0.5f) ? p1.second : p0.second;
+            } else if(b < t1 - w){
+                auto p = sampleHeight(1); hF = p.first; surfGrass = p.second;
+            } else if(b < t1 + w){
+                auto p0 = sampleHeight(1); auto p1 = sampleHeight(2); float s = sstep(t1 - w, t1 + w, b);
+                hF = (1.0f - s) * p0.first + s * p1.first; surfGrass = (s >= 0.5f) ? p1.second : p0.second;
+            } else {
+                auto p = sampleHeight(2); hF = p.first; surfGrass = p.second;
+            }
+
+            int height = (int)floorf(hF);
+            height = std::clamp(height, 0, CHUNK_HEIGHT-1);
+
+            // Small ponds: only in lower terrain; carve shallow bowls and fill with water (id 8)
+            // Evaluate a low-frequency mask and a local radial/banded shape to decide ponds
+            const float lowlandThreshold = 20.0f;
+            bool allowPond = (hF < lowlandThreshold);
+            uint8_t waterId = 8; // new voxel id for water
+            int pondDepth = 0;
+            if(allowPond){
+                // Mask controls where ponds are allowed
+                float mask = fbm2D(wx * (1.0f/180.0f), wz * (1.0f/180.0f), m_seed + 8181u, 3, 2.0f, 0.5f);
+                // Center-ish when near 0.5
+                float m = 1.0f - abs(mask - 0.5f) * 2.0f; // ~1 near 0.5, 0 at edges
+                m = std::clamp(m, 0.0f, 1.0f);
+                // Shape noise for bowl depth variation
+                float shape = fbm2D(wx * (1.0f/32.0f), wz * (1.0f/32.0f), m_seed + 9191u, 2, 2.0f, 0.5f);
+                shape = 0.5f * (shape + 1.0f);
+                float pondChance = m * 0.35f; // keep rare
+                if(pondChance > 0.32f){
+                    // Carve a shallow basin of 1-3 voxels below height
+                    pondDepth = 1 + (int)floorf(2.5f * shape);
+                    pondDepth = std::clamp(pondDepth, 1, 3);
+                }
+            }
+
+            // Meandering tan paths: banded FBM noise creates continuous contour-like lines across chunks
+            const float pathScale = 1.0f / 140.0f; // lower => larger features
+            const int   pathBands = 5;             // number of repeating bands
+            const float pathWidth = 0.035f;        // half-width in band space
+            float vPath = fbm2D(wx * pathScale, wz * pathScale, m_seed + 7777u, 4, 2.0f, 0.5f);
+            // Distance to band center (0.5) after tiling into bands
+            float bandPhase = vPath * pathBands;
+            float fracPhase = bandPhase - floorf(bandPhase);
+            float dBand = fabsf(fracPhase - 0.5f);
+            bool isPathHere = (dBand < pathWidth);
+            // Slight widening by checking a tiny offset along two axes to avoid gaps on steep diagonals
+            if(!isPathHere){
+                float vP2 = fbm2D((wx+0.6f) * pathScale, (wz+0.2f) * pathScale, m_seed + 7777u, 4, 2.0f, 0.5f);
+                float ph2 = vP2 * pathBands; float fr2 = ph2 - floorf(ph2);
+                if(fabsf(fr2 - 0.5f) < pathWidth) isPathHere = true;
+            }
+
+            for(int y = 0; y < CHUNK_HEIGHT; ++y) {
+                uint8_t id = 0;
+                if(y <= height) {
+                    if(pondDepth > 0 && y >= height - pondDepth && y <= height){
+                        // Make the bowl hollow: air up to waterline, then fill with water at or below height-1
+                        // Set an approximate waterline one voxel below original surface to reduce shoreline stair-steps
+                        int waterline = height - 1;
+                        if(y <= waterline){
+                            id = waterId; // water inside pond up to the waterline
+                        } else {
+                            id = 0; // hollowed air above waterline (including original surface)
+                        }
+                    } else if(y == height) {
+                        // Replace surface block with path when condition matches; id 7 = PATH (tan)
+                        id = (isPathHere ? 7 : surfGrass);
+                    }
+                    else if(y >= height-3) id = 3; // dirt
+                    else id = 4; // stone
+                }
+                c.blocks[idx(x,y,z)] = id;
             }
         }
     }
+}
+
+long long VoxelWorld::Key(int cx, int cz){ return ( (long long)cx << 32 ) ^ (unsigned long long)(unsigned int)cz; }
+
+void VoxelWorld::EnsureChunkGenerated(int cx, int cz) const {
+    long long k = Key(cx, cz);
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        auto it = m_chunks.find(k);
+        if(it != m_chunks.end()) return;
+    }
+    // Generate outside the lock
+    Chunk c{};
+    const_cast<VoxelWorld*>(this)->GenerateChunkData(c, cx, cz);
+    const_cast<VoxelWorld*>(this)->ApplyModsIfAny(c, k);
+    // Insert under lock if still missing
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        if(m_chunks.find(k) == m_chunks.end()){
+            m_chunks.emplace(k, std::move(c));
+            m_versions[k] = 0; // initial version
+        }
+    }
+}
+
+const Chunk& VoxelWorld::GetChunk(int cx, int cz) const {
+    EnsureChunkGenerated(cx, cz);
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return m_chunks.find(Key(cx,cz))->second;
+}
+
+Chunk& VoxelWorld::GetChunk(int cx, int cz) {
+    EnsureChunkGenerated(cx, cz);
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return m_chunks.find(Key(cx,cz))->second;
+}
+
+uint8_t VoxelWorld::GetBlock(int x, int y, int z) const {
+    int cx = (int)floorf((float)x / CHUNK_SIZE);
+    int cz = (int)floorf((float)z / CHUNK_SIZE);
+    if(y < 0 || y >= CHUNK_HEIGHT) return 0;
+    int lx = (x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    int lz = (z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    // Ensure exists, then read under lock to avoid invalid references
+    EnsureChunkGenerated(cx, cz);
+    std::lock_guard<std::mutex> lk(m_mutex);
+    auto it = m_chunks.find(Key(cx, cz));
+    if(it == m_chunks.end()) return 0; // should not happen
+    return it->second.blocks[idx(lx, y, lz)];
+}
+
+void VoxelWorld::SetBlock(int x, int y, int z, uint8_t id) {
+    int cx = (int)floorf((float)x / CHUNK_SIZE);
+    int cz = (int)floorf((float)z / CHUNK_SIZE);
+    if(y < 0 || y >= CHUNK_HEIGHT) return;
+    int lx = (x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    int lz = (z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    // Ensure exists, then write under lock
+    long long k = Key(cx, cz);
+    EnsureChunkGenerated(cx, cz);
+    std::lock_guard<std::mutex> lk(m_mutex);
+    // Update mods overlay and in-memory chunk
+    m_mods[k][idx(lx, y, lz)] = id;
+    auto it = m_chunks.find(k);
+    if(it != m_chunks.end()) it->second.blocks[idx(lx, y, lz)] = id;
+    // bump version for this chunk
+    m_versions[k] += 1;
+}
+
+void VoxelWorld::ApplyModsIfAny(Chunk& out, long long key) const {
+    auto mit = m_mods.find(key);
+    if(mit == m_mods.end()) return;
+    for(const auto& kv : mit->second){
+        int linear = kv.first; uint8_t id = kv.second;
+        if(linear >= 0 && linear < (int)out.blocks.size()) out.blocks[linear] = id;
+    }
+}
+
+unsigned VoxelWorld::GetChunkVersion(int cx, int cz) const {
+    long long k = Key(cx, cz);
+    std::lock_guard<std::mutex> lk(m_mutex);
+    auto it = m_versions.find(k);
+    return (it == m_versions.end()) ? 0u : it->second;
+}
+
+VoxelWorld::Biome VoxelWorld::GetBiomeAt(int wx, int wz) const {
+    const float biomeScale = 1.0f / 256.0f;
+    float b = fbm2D(wx * biomeScale, wz * biomeScale, m_seed + 9001u, 3, 2.0f, 0.5f);
+    b = 0.5f * (b + 1.0f);
+    b = powf(std::clamp(b, 0.0f, 1.0f), 1.2f);
+    if(b < 0.65f) return Biome::Plains;
+    if(b < 0.90f) return Biome::Hills;
+    return Biome::Mountains;
 }

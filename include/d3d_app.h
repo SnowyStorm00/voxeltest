@@ -21,6 +21,7 @@ public:
     IDXGISwapChain* GetSwapChain() const { return m_swapChain.Get(); }
     ID3D11RenderTargetView* GetRTV() const { return m_rtv.Get(); }
     ID3D11DepthStencilView* GetDSV() const { return m_dsv.Get(); }
+    ID3D11Texture2D* GetBackBufferTexture() const { return m_backBuffer.Get(); }
 
 protected:
     virtual void Update(float dt) {}
@@ -45,6 +46,7 @@ protected:
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
     Microsoft::WRL::ComPtr<IDXGISwapChain> m_swapChain;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_rtv;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> m_backBuffer;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_depth;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilView> m_dsv;
 };

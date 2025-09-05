@@ -18,6 +18,8 @@ public:
 
     DirectX::XMFLOAT3 Position() const { return m_pos; }
     void SetPosition(float x, float y, float z) { m_pos = {x,y,z}; }
+    DirectX::XMFLOAT3 Look() const { return m_look; }
+    DirectX::XMFLOAT3 Right() const { return m_right; }
 
 private:
     DirectX::XMFLOAT3 m_pos {0, 0, -5};

@@ -81,10 +81,9 @@ bool D3DApp::InitD3D() {
         m_device.GetAddressOf(), &createdFL, m_context.GetAddressOf());
     if(FAILED(hr)) return false;
 
-    ComPtr<ID3D11Texture2D> backBuffer;
-    hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+    hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&m_backBuffer));
     if(FAILED(hr)) return false;
-    hr = m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, m_rtv.GetAddressOf());
+    hr = m_device->CreateRenderTargetView(m_backBuffer.Get(), nullptr, m_rtv.GetAddressOf());
     if(FAILED(hr)) return false;
 
     D3D11_TEXTURE2D_DESC depthDesc{};
@@ -114,19 +113,21 @@ bool D3DApp::InitD3D() {
 }
 
 void D3DApp::OnResize(int width, int height) {
+    // Guard against zero-sized resize (minimized) which breaks RT/DS creation
+    if(width <= 0 || height <= 0) return;
     m_width = width; m_height = height;
     if(!m_swapChain) return;
 
     m_context->OMSetRenderTargets(0, nullptr, nullptr);
     m_rtv.Reset();
+    m_backBuffer.Reset();
     m_dsv.Reset();
     m_depth.Reset();
 
     m_swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
 
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> backBuffer;
-    m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-    m_device->CreateRenderTargetView(backBuffer.Get(), nullptr, m_rtv.GetAddressOf());
+    m_swapChain->GetBuffer(0, IID_PPV_ARGS(&m_backBuffer));
+    m_device->CreateRenderTargetView(m_backBuffer.Get(), nullptr, m_rtv.GetAddressOf());
 
     D3D11_TEXTURE2D_DESC depthDesc{};
     depthDesc.Width = width;
@@ -153,7 +154,12 @@ void D3DApp::OnResize(int width, int height) {
 LRESULT D3DApp::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_SIZE:
-            OnResize(LOWORD(lParam), HIWORD(lParam));
+            if(wParam != SIZE_MINIMIZED) {
+                OnResize(LOWORD(lParam), HIWORD(lParam));
+            }
+            return 0;
+        case WM_DESTROY:
+            PostQuitMessage(0);
             return 0;
         default:
             return DefWindowProc(hwnd, msg, wParam, lParam);
