@@ -746,6 +746,9 @@ private:
             else if(biome == VoxelWorld::Biome::Mountains) bname = L"MOUNTAINS";
             else if(biome == VoxelWorld::Biome::Desert) bname = L"DESERT";
             DrawGlyphStringTopRight(bname, 0xFFB0FFC0u, 2, 36); // slightly lower margin
+            // Coordinates under biome
+            wchar_t coord[64]; swprintf(coord, 64, L"X:%d Y:%d Z:%d", (int)std::floor(p.x), (int)std::floor(p.y), (int)std::floor(p.z));
+            DrawGlyphStringTopRight(coord, 0xFFDDDDAAu, 2, 62);
         }
     }
 

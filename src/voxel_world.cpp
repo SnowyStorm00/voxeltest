@@ -247,14 +247,33 @@ void VoxelWorld::GenerateChunkData(Chunk& c, int cx, int cz) const {
                         int ly = baseY + i;
                         if(c.blocks[idx(x,ly,z)] == 0) c.blocks[idx(x,ly,z)] = 10; // 10 = cactus
                     }
-                    // Rare arm branching to +X or +Z
-                    if(((h >> 8) & 0xFF) < 4 && baseY+1 < CHUNK_HEIGHT){
-                        if(x+1 < CHUNK_SIZE && c.blocks[idx(x+1, baseY+1, z)] == 0) c.blocks[idx(x+1, baseY+1, z)] = 10;
-                        if(x+2 < CHUNK_SIZE && c.blocks[idx(x+2, baseY+1, z)] == 0) c.blocks[idx(x+2, baseY+1, z)] = 10;
+                    // Arm branches in 4 directions with height variation; more common toward desert core
+                    auto rand01 = [&](uint32_t k){ uint32_t r=k; r ^= r>>13; r *= 1274126177u; r ^= r>>16; return (r & 0xFFFF) / 65535.0f; };
+                    float armProb = 0.08f + 0.18f * occ; // ~8% at fringe up to ~26% at core per direction
+                    int armHeights[4];
+                    armHeights[0] = baseY + 1 + (int)((h >> 20) % std::max(1, tall-2)); // +X
+                    armHeights[1] = baseY + 1 + (int)((h >> 21) % std::max(1, tall-2)); // -X
+                    armHeights[2] = baseY + 1 + (int)((h >> 22) % std::max(1, tall-2)); // +Z
+                    armHeights[3] = baseY + 1 + (int)((h >> 23) % std::max(1, tall-2)); // -Z
+                    // +X
+                    if(rand01(h ^ 0xA1B2C3u) < armProb){ int ay = std::min(armHeights[0], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
+                        if(x+1 < CHUNK_SIZE && c.blocks[idx(x+1, ay, z)] == 0) c.blocks[idx(x+1, ay, z)] = 10;
+                        if(x+2 < CHUNK_SIZE && c.blocks[idx(x+2, ay, z)] == 0) c.blocks[idx(x+2, ay, z)] = 10; }
                     }
-                    if(((h >> 4) & 0xFF) < 4 && baseY+2 < CHUNK_HEIGHT){
-                        if(z+1 < CHUNK_SIZE && c.blocks[idx(x, baseY+2, z+1)] == 0) c.blocks[idx(x, baseY+2, z+1)] = 10;
-                        if(z+2 < CHUNK_SIZE && c.blocks[idx(x, baseY+2, z+2)] == 0) c.blocks[idx(x, baseY+2, z+2)] = 10;
+                    // -X
+                    if(rand01(h ^ 0xB2C3D4u) < armProb){ int ay = std::min(armHeights[1], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
+                        if(x-1 >= 0 && c.blocks[idx(x-1, ay, z)] == 0) c.blocks[idx(x-1, ay, z)] = 10;
+                        if(x-2 >= 0 && c.blocks[idx(x-2, ay, z)] == 0) c.blocks[idx(x-2, ay, z)] = 10; }
+                    }
+                    // +Z
+                    if(rand01(h ^ 0xC3D4E5u) < armProb){ int ay = std::min(armHeights[2], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
+                        if(z+1 < CHUNK_SIZE && c.blocks[idx(x, ay, z+1)] == 0) c.blocks[idx(x, ay, z+1)] = 10;
+                        if(z+2 < CHUNK_SIZE && c.blocks[idx(x, ay, z+2)] == 0) c.blocks[idx(x, ay, z+2)] = 10; }
+                    }
+                    // -Z
+                    if(rand01(h ^ 0xD4E5F6u) < armProb){ int ay = std::min(armHeights[3], CHUNK_HEIGHT-1); if(ay < CHUNK_HEIGHT){
+                        if(z-1 >= 0 && c.blocks[idx(x, ay, z-1)] == 0) c.blocks[idx(x, ay, z-1)] = 10;
+                        if(z-2 >= 0 && c.blocks[idx(x, ay, z-2)] == 0) c.blocks[idx(x, ay, z-2)] = 10; }
                     }
                 }
             }
